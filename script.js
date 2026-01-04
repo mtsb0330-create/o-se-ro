@@ -700,18 +700,91 @@ document.addEventListener('DOMContentLoaded', () => {
         undoMove();
     });
 
-    // コメントボタンのイベントリスナー(左右両方)
+    // コメントボタンのイベントリスナー（長押しドラッグ対応）
+    const setupDraggableButton = (btn, onClickHandler) => {
+        let isDragging = false;
+        let longPressTimer;
+        let startX, startY;
+
+        const onPointerDown = (e) => {
+            // e.preventDefault(); // これを入れるとスクロールできなくなるので注意。長押し判定中に動いたらキャンセルするなど調整。
+            isDragging = false;
+            startX = e.clientX;
+            startY = e.clientY;
+
+            // 500ms 長押しでドラッグモード開始
+            longPressTimer = setTimeout(() => {
+                isDragging = true;
+                btn.classList.add('dragging'); // 視覚フィードバック用クラス（必要ならCSS追加）
+                btn.style.opacity = '0.5';
+                btn.style.transform = 'scale(1.2)';
+            }, 500);
+        };
+
+        const onPointerMove = (e) => {
+            if (longPressTimer && !isDragging) {
+                // 長押し判定中に指が大きく動いたらキャンセル（スクロール操作などを阻害しないため）
+                const moveDist = Math.hypot(e.clientX - startX, e.clientY - startY);
+                if (moveDist > 10) {
+                    clearTimeout(longPressTimer);
+                    longPressTimer = null;
+                }
+            }
+
+            if (isDragging) {
+                e.preventDefault(); // ドラッグ中は画面スクロールさせない
+                // ボタンの中心を指に追従させる
+                const btnSize = 60; // モバイルでのサイズ概算
+                btn.style.left = `${e.clientX - btnSize / 2}px`;
+                btn.style.top = `${e.clientY - btnSize / 2}px`;
+                btn.style.bottom = 'auto'; // CSSの固定配置を解除
+                btn.style.right = 'auto';
+            }
+        };
+
+        const onPointerUp = (e) => {
+            if (longPressTimer) {
+                clearTimeout(longPressTimer);
+                longPressTimer = null;
+            }
+
+            btn.style.opacity = '';
+            btn.style.transform = '';
+            btn.classList.remove('dragging');
+
+            if (isDragging) {
+                // ドラッグ終了
+                isDragging = false;
+            } else {
+                // ドラッグじゃなかったらクリック動作
+                onClickHandler(e);
+            }
+        };
+
+        btn.addEventListener('pointerdown', onPointerDown);
+        window.addEventListener('pointermove', onPointerMove);
+        window.addEventListener('pointerup', onPointerUp);
+    };
+
     const openCommentMenu = (e) => {
-        e.preventDefault();
+        // e.preventDefault(); // setupDraggableButton内で制御するのでここでは不要
         if (!e.target.disabled) {
             commentMenu.classList.remove('hidden');
             // どちらのボタンが押されたかを記録
-            commentMenu.dataset.source = e.target.id === 'comment-btn-left' ? 'left' : 'right';
+            // e.target は押された要素だが、setupDraggableButton の引数 btn を使うほうが確実かもしれないが、
+            // イベント発生元からID取れるのでOK
+            // ただし、pointerupイベントの実引数eが渡ってくる。
+
+            // e.targetがアイコン(iタグ)などの場合があるのでclosestでボタンを探す
+            const btn = e.target.closest('button');
+            if (btn) {
+                commentMenu.dataset.source = btn.id === 'comment-btn-left' ? 'left' : 'right';
+            }
         }
     };
 
-    commentBtnLeft.addEventListener('pointerup', openCommentMenu);
-    commentBtnRight.addEventListener('pointerup', openCommentMenu);
+    setupDraggableButton(commentBtnLeft, openCommentMenu);
+    setupDraggableButton(commentBtnRight, openCommentMenu);
 
     // メニューを閉じる
     closeMenuBtn.addEventListener('pointerup', (e) => {

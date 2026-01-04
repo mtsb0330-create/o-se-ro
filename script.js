@@ -700,30 +700,34 @@ document.addEventListener('DOMContentLoaded', () => {
         undoMove();
     });
 
-    // コメントボタンのイベントリスナー（長押しドラッグ対応）
+    // コメントボタンのイベントリスナー（長押しドラッグ対応 - 修正版）
     const setupDraggableButton = (btn, onClickHandler) => {
         let isDragging = false;
         let longPressTimer;
         let startX, startY;
 
         const onPointerDown = (e) => {
-            // e.preventDefault(); // これを入れるとスクロールできなくなるので注意。長押し判定中に動いたらキャンセルするなど調整。
+            // e.preventDefault(); 
             isDragging = false;
             startX = e.clientX;
             startY = e.clientY;
 
-            // 500ms 長押しでドラッグモード開始
+            // 長押しタイマー開始
             longPressTimer = setTimeout(() => {
                 isDragging = true;
-                btn.classList.add('dragging'); // 視覚フィードバック用クラス（必要ならCSS追加）
+                btn.classList.add('dragging');
                 btn.style.opacity = '0.5';
                 btn.style.transform = 'scale(1.2)';
             }, 500);
+
+            // pointerdownした時だけ window の move/up を監視する
+            window.addEventListener('pointermove', onPointerMove);
+            window.addEventListener('pointerup', onPointerUp);
         };
 
         const onPointerMove = (e) => {
             if (longPressTimer && !isDragging) {
-                // 長押し判定中に指が大きく動いたらキャンセル（スクロール操作などを阻害しないため）
+                // 指が動いたら長押しキャンセル
                 const moveDist = Math.hypot(e.clientX - startX, e.clientY - startY);
                 if (moveDist > 10) {
                     clearTimeout(longPressTimer);
@@ -732,17 +736,20 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             if (isDragging) {
-                e.preventDefault(); // ドラッグ中は画面スクロールさせない
-                // ボタンの中心を指に追従させる
-                const btnSize = 60; // モバイルでのサイズ概算
+                e.preventDefault();
+                const btnSize = 60;
                 btn.style.left = `${e.clientX - btnSize / 2}px`;
                 btn.style.top = `${e.clientY - btnSize / 2}px`;
-                btn.style.bottom = 'auto'; // CSSの固定配置を解除
+                btn.style.bottom = 'auto';
                 btn.style.right = 'auto';
             }
         };
 
         const onPointerUp = (e) => {
+            // イベントリスナー解除
+            window.removeEventListener('pointermove', onPointerMove);
+            window.removeEventListener('pointerup', onPointerUp);
+
             if (longPressTimer) {
                 clearTimeout(longPressTimer);
                 longPressTimer = null;
@@ -753,17 +760,24 @@ document.addEventListener('DOMContentLoaded', () => {
             btn.classList.remove('dragging');
 
             if (isDragging) {
-                // ドラッグ終了
+                // ドラッグ終了（何もしない）
                 isDragging = false;
             } else {
-                // ドラッグじゃなかったらクリック動作
-                onClickHandler(e);
+                // ドラッグせずに指を離した場合、かつボタンの上で離した場合のみクリック扱い
+                // windowイベントなので画面外で離してもここに来るため判定が必要
+                const rect = btn.getBoundingClientRect();
+                const isOverButton = (
+                    e.clientX >= rect.left && e.clientX <= rect.right &&
+                    e.clientY >= rect.top && e.clientY <= rect.bottom
+                );
+
+                if (isOverButton) {
+                    onClickHandler(e);
+                }
             }
         };
 
         btn.addEventListener('pointerdown', onPointerDown);
-        window.addEventListener('pointermove', onPointerMove);
-        window.addEventListener('pointerup', onPointerUp);
     };
 
     const openCommentMenu = (e) => {

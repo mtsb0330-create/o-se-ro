@@ -19,6 +19,16 @@ document.addEventListener('DOMContentLoaded', () => {
     const myIdDisplay = document.getElementById('my-id-display');
     const statusDot = document.querySelector('.status-dot');
 
+    // 新機能用のDOM要素
+    const undoBtn = document.getElementById('undo-btn');
+    const resultDisplay = document.getElementById('result-display');
+    const commentBtnLeft = document.getElementById('comment-btn-left');
+    const commentBtnRight = document.getElementById('comment-btn-right');
+    const commentDisplay = document.getElementById('comment-display');
+    const commentMenu = document.getElementById('comment-menu');
+    const closeMenuBtn = document.getElementById('close-menu-btn');
+    const commentOptions = document.querySelectorAll('.comment-option');
+
     const BOARD_SIZE = 8;
     const PLAYER1 = 1; // Blue / Host
     const PLAYER2 = 2; // Red / Guest
@@ -30,6 +40,21 @@ document.addEventListener('DOMContentLoaded', () => {
     let peer = null;
     let conn = null;
     let connectionTimeout = null;
+
+    // 履歴管理
+    let moveHistory = [];
+
+    // リザルトスコア管理
+    let gameResults = loadGameResults();
+
+    // コメント用のセリフ(仮)
+    const comments = [
+        "考えすぎじゃない?😏",
+        "そこに置くの?🤔",
+        "まだ時間かかる?⏰",
+        "頑張ってね〜✨",
+        "いい勝負だね!🔥"
+    ];
 
     // Sound Effects Controller
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -91,6 +116,120 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // リザルトスコア管理関数
+    function loadGameResults() {
+        const saved = localStorage.getItem('faceReversiResults');
+        if (saved) {
+            return JSON.parse(saved);
+        }
+        return { player1Wins: 0, player2Wins: 0, draws: 0 };
+    }
+
+    function saveGameResults() {
+        localStorage.setItem('faceReversiResults', JSON.stringify(gameResults));
+    }
+
+    function updateResultDisplay() {
+        resultDisplay.textContent = `TAKU: ${gameResults.player1Wins}勝 | emicof: ${gameResults.player2Wins}勝 | 引分: ${gameResults.draws}`;
+    }
+
+    function recordGameResult(winner) {
+        if (winner === PLAYER1) {
+            gameResults.player1Wins++;
+        } else if (winner === PLAYER2) {
+            gameResults.player2Wins++;
+        } else {
+            gameResults.draws++;
+        }
+        saveGameResults();
+        updateResultDisplay();
+    }
+
+    // コメント機能 - 連続表示対応
+    let commentCounter = 0;
+
+    function showComment(message, direction = 'left') {
+        // 新しいコメント要素を作成
+        const commentElement = document.createElement('div');
+        commentElement.classList.add('comment-text');
+
+        // 方向に応じたクラスとスタイルを適用
+        if (direction === 'right') {
+            // 右ボタン（右→左）
+            commentElement.classList.add('slide-left');
+        } else {
+            // 左ボタン（左→右）
+            commentElement.classList.add('slide-right');
+        }
+
+        commentElement.textContent = message;
+        commentElement.style.top = `${commentCounter * 80}px`; // 縦にずらす
+
+        commentDisplay.appendChild(commentElement);
+        commentDisplay.classList.remove('hidden');
+
+        commentCounter++;
+
+        // 5秒後にこのコメントを削除
+        setTimeout(() => {
+            commentElement.remove();
+            commentCounter--;
+
+            // すべてのコメントが消えたら非表示に
+            if (commentDisplay.children.length === 0) {
+                commentDisplay.classList.add('hidden');
+                commentCounter = 0;
+            }
+        }, 5000);
+    }
+
+    // アンドゥ機能
+    function saveGameState() {
+        // 現在の状態を履歴に保存
+        moveHistory.push({
+            board: board.map(row => [...row]),
+            currentPlayer: currentPlayer,
+            score1: parseInt(score1Element.textContent),
+            score2: parseInt(score2Element.textContent)
+        });
+
+        // アンドゥボタンを有効化
+        if (!isOnline) {
+            undoBtn.disabled = false;
+        }
+    }
+
+    function undoMove() {
+        if (moveHistory.length === 0 || gameOver) return;
+
+        // 最後の状態を削除(現在の状態)
+        moveHistory.pop();
+
+        if (moveHistory.length === 0) {
+            // 履歴がない場合は初期状態に戻す
+            initGame();
+            return;
+        }
+
+        // 1つ前の状態を取得
+        const prevState = moveHistory[moveHistory.length - 1];
+
+        // 状態を復元
+        board = prevState.board.map(row => [...row]);
+        currentPlayer = prevState.currentPlayer;
+        score1Element.textContent = prevState.score1;
+        score2Element.textContent = prevState.score2;
+
+        // 画面を更新
+        updateTurnDisplay();
+        renderBoard();
+
+        // 履歴が空になったらボタンを無効化
+        if (moveHistory.length === 0) {
+            undoBtn.disabled = true;
+        }
+    }
+
     // Initialize game
     function initGame() {
         board = Array(BOARD_SIZE).fill(null).map(() => Array(BOARD_SIZE).fill(0));
@@ -104,6 +243,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
         currentPlayer = PLAYER1;
         gameOver = false;
+
+        // 履歴をクリア
+        moveHistory = [];
+        undoBtn.disabled = true;
+
+        // リザルトスコア表示を更新
+        updateResultDisplay();
+
+        // コメントボタンの状態を更新
+        updateCommentButton();
+
         modal.classList.add('hidden');
         renderBoard();
         updateScore();
@@ -218,6 +368,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 handleMove(data.r, data.c, true);
             } else if (data.type === 'restart') {
                 initGame();
+            } else if (data.type === 'comment') {
+                showComment(data.message, data.direction);
             }
         });
 
@@ -300,6 +452,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const flipped = flipDiscs(r, c, currentPlayer);
         if (flipped.length > 0) {
+            // ゲーム状態を保存(手を打つ前)
+            saveGameState();
+
             board[r][c] = currentPlayer;
             playPlaceSound();
 
@@ -325,29 +480,29 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (cell && cell.firstChild) {
                     const disc = cell.firstChild;
 
-                    await new Promise(r => setTimeout(r, 100)); // Delay
+                    await new Promise(r => setTimeout(r, 150)); // Delay (少し間隔を空ける)
 
                     playFlipSound(i++);
 
                     // Trigger 3D Animation
                     disc.classList.add('flipping');
 
-                    // Swap texture halfway
+                    // Swap texture halfway (宙に舞っている最中に切り替え)
                     const newClass = currentPlayer === PLAYER1 ? 'player1' : 'player2';
                     const oldClass = currentPlayer === PLAYER1 ? 'player2' : 'player1';
 
                     setTimeout(() => {
                         disc.classList.remove(oldClass);
                         disc.classList.add(newClass);
-                    }, 300);
+                    }, 500); // 1.2sの約40%地点
 
                     setTimeout(() => {
                         disc.classList.remove('flipping');
-                    }, 600);
+                    }, 1200); // アニメーション終了時間
                 }
             }
 
-            await new Promise(r => setTimeout(r, 600));
+            await new Promise(r => setTimeout(r, 1200)); // 全体の待機時間も延長
             boardElement.style.pointerEvents = 'auto'; // Unlock
 
             // Send move to remote peer
@@ -357,6 +512,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
             updateScore();
             changeTurn();
+
+            // コメントボタンの状態を更新
+            updateCommentButton();
         }
     }
 
@@ -442,18 +600,24 @@ document.addEventListener('DOMContentLoaded', () => {
         winnerImage.classList.remove('player1', 'player2');
 
         if (p1Score > p2Score) {
-            modalTitle.textContent = "TAKUの勝ち！";
-            modalMessage.textContent = `TAKUの勝利です！ (${p1Score} - ${p2Score})`;
+            modalTitle.textContent = "TAKUの勝ち!";
+            modalMessage.textContent = `TAKUの勝利です! (${p1Score} - ${p2Score})`;
             winnerImage.classList.add('player1');
+            recordGameResult(PLAYER1);
         } else if (p2Score > p1Score) {
-            modalTitle.textContent = "emicofの勝ち！";
-            modalMessage.textContent = `emicofの勝利です！ (${p2Score} - ${p1Score})`;
+            modalTitle.textContent = "emicofの勝ち!";
+            modalMessage.textContent = `emicofの勝利です! (${p2Score} - ${p1Score})`;
             winnerImage.classList.add('player2');
+            recordGameResult(PLAYER2);
         } else {
-            modalTitle.textContent = "引き分け！";
-            modalMessage.textContent = `互角の戦いでした！ (${p1Score} - ${p2Score})`;
+            modalTitle.textContent = "引き分け!";
+            modalMessage.textContent = `互角の戦いでした! (${p1Score} - ${p2Score})`;
             winnerImage.classList.add('hidden');
+            recordGameResult(null);
         }
+
+        // コメントボタンを無効化
+        commentBtn.disabled = true;
     }
 
     // Logic: Get valid moves
@@ -529,6 +693,74 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         initGame();
     });
+
+    // アンドゥボタンのイベントリスナー
+    undoBtn.addEventListener('pointerup', (e) => {
+        e.preventDefault();
+        undoMove();
+    });
+
+    // コメントボタンのイベントリスナー(左右両方)
+    const openCommentMenu = (e) => {
+        e.preventDefault();
+        if (!e.target.disabled) {
+            commentMenu.classList.remove('hidden');
+            // どちらのボタンが押されたかを記録
+            commentMenu.dataset.source = e.target.id === 'comment-btn-left' ? 'left' : 'right';
+        }
+    };
+
+    commentBtnLeft.addEventListener('pointerup', openCommentMenu);
+    commentBtnRight.addEventListener('pointerup', openCommentMenu);
+
+    // メニューを閉じる
+    closeMenuBtn.addEventListener('pointerup', (e) => {
+        e.preventDefault();
+        commentMenu.classList.add('hidden');
+    });
+
+    // コメント選択肢のイベントリスナー
+    commentOptions.forEach(option => {
+        option.addEventListener('pointerup', (e) => {
+            e.preventDefault();
+            const commentIndex = parseInt(e.target.dataset.comment);
+            const selectedComment = comments[commentIndex];
+
+            // 押されたボタンの方向を取得（左ボタンなら右に流すのでdirection='left'、右ボタンなら左に流すのでdirection='right'） ...の逆？
+            // ユーザー要望: 
+            // 左ボタン -> 左から右に流れる ('slide-right' class, direction='left' passed logic?)
+            // 右ボタン -> 右から左に流れる ('slide-left' class, direction='right' passed logic?)
+
+            // sourceが 'left' (左ボタン) なら、左から右へ流す ('left' direction param -> 'slide-right' class)
+            // sourceが 'right' (右ボタン) なら、右から左へ流す ('right' direction param -> 'slide-left' class)
+
+            const source = commentMenu.dataset.source === 'left' ? 'left' : 'right';
+
+            showComment(selectedComment, source);
+            commentMenu.classList.add('hidden');
+
+            // Online: Send comment + direction
+            if (isOnline && conn && conn.open) {
+                conn.send({ type: 'comment', message: selectedComment, direction: source });
+            }
+        });
+    });
+
+    // メニュー背景クリックで閉じる
+    commentMenu.addEventListener('pointerup', (e) => {
+        if (e.target === commentMenu) {
+            commentMenu.classList.add('hidden');
+        }
+    });
+
+    // コメントボタンの状態を更新する関数
+    function updateCommentButton() {
+        // 自分のターンでない場合のみコメントボタンを有効化
+        const shouldDisable = gameOver || (isOnline && currentPlayer === myPlayerNum);
+
+        commentBtnLeft.disabled = shouldDisable;
+        commentBtnRight.disabled = shouldDisable;
+    }
 
     // Initial Start
     initGame();
